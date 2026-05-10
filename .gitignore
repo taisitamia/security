@@ -1,0 +1,7 @@
+.env
+*.env
+server_backup.json
+__pycache__/
+*.py[cod]
+venv/
+*.log
