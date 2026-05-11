@@ -9,7 +9,6 @@ import logging
 # ─── CONFIG (desde variables de entorno) ──────────────────────────────────────
 TOKEN                    = os.environ["DISCORD_TOKEN"]          # Obligatorio
 BACKUP_INTERVAL_MINUTES  = int(os.getenv("BACKUP_INTERVAL", "30"))
-MAX_MESSAGES_PER_CHANNEL = int(os.getenv("MAX_MESSAGES", "500"))
 NUKE_THRESHOLD           = int(os.getenv("NUKE_THRESHOLD", "3"))
 NUKE_WINDOW_SECONDS      = int(os.getenv("NUKE_WINDOW", "10"))
 BACKUP_FILE              = "server_backup.json"
@@ -90,21 +89,8 @@ async def backup_guild(guild: discord.Guild) -> dict:
             "nsfw": channel.is_nsfw(),
             "slowmode_delay": channel.slowmode_delay,
             "category_id": channel.category_id,
-            "overwrites": serialize_overwrites(channel.overwrites),
-            "messages": []
+            "overwrites": serialize_overwrites(channel.overwrites)
         }
-        try:
-            async for msg in channel.history(limit=MAX_MESSAGES_PER_CHANNEL, oldest_first=True):
-                channel_data["messages"].append({
-                    "author": str(msg.author),
-                    "author_id": msg.author.id,
-                    "content": msg.content,
-                    "timestamp": msg.created_at.isoformat(),
-                    "attachments": [a.url for a in msg.attachments],
-                    "embeds": [e.to_dict() for e in msg.embeds]
-                })
-        except discord.Forbidden:
-            log.warning(f"  Sin permiso para leer #{channel.name}")
         backup["channels"].append(channel_data)
         await asyncio.sleep(0.2)
 
@@ -117,11 +103,10 @@ async def backup_guild(guild: discord.Guild) -> dict:
             "bitrate": channel.bitrate,
             "user_limit": channel.user_limit,
             "category_id": channel.category_id,
-            "overwrites": serialize_overwrites(channel.overwrites),
-            "messages": []
+            "overwrites": serialize_overwrites(channel.overwrites)
         })
 
-    log.info(f"✅ Backup listo: {len(backup['channels'])} canales, {sum(len(c.get('messages',[])) for c in backup['channels'])} mensajes")
+    log.info(f"✅ Backup listo: {len(backup['channels'])} canales, {len(backup['roles'])} roles")
     return backup
 
 
@@ -199,7 +184,7 @@ async def restore_guild(guild: discord.Guild, backup: dict, log_channel=None):
             log.error(f"Error creando categoría '{cat_data['name']}': {e}")
 
     # ── Canales del backup ─────────────────────────────────────────────────────
-    await status("💬 Restaurando canales y mensajes...")
+    await status("💬 Restaurando canales...")
     backup_channel_names_text  = {ch["name"] for ch in backup.get("channels", []) if ch.get("type") != "voice"}
     backup_channel_names_voice = {ch["name"] for ch in backup.get("channels", []) if ch.get("type") == "voice"}
 
@@ -242,9 +227,6 @@ async def restore_guild(guild: discord.Guild, backup: dict, log_channel=None):
             except Exception as e:
                 log.error(f"Error creando canal '#{ch_data['name']}': {e}")
                 continue
-
-        if ch_data.get("messages"):
-            await restore_messages(existing, ch_data["messages"])
 
     # ── Eliminar canales que NO están en el backup ─────────────────────────────
     await status("🧹 Eliminando canales extra (no presentes en el backup)...")
@@ -291,33 +273,6 @@ async def restore_guild(guild: discord.Guild, backup: dict, log_channel=None):
             pass
 
     restore_in_progress.discard(guild.id)
-
-
-async def restore_messages(channel: discord.TextChannel, messages: list):
-    try:
-        webhook = await channel.create_webhook(name="BackupBot Restore")
-    except Exception as e:
-        log.error(f"No se pudo crear webhook en #{channel.name}: {e}")
-        return
-
-    for msg in messages:
-        if not msg.get("content") and not msg.get("attachments"):
-            continue
-        try:
-            content = f"**[{msg['author']}** | {msg['timestamp'][:10]}**]** {msg['content']}"
-            await webhook.send(
-                content=content[:2000],
-                username=msg["author"][:80],
-                allowed_mentions=discord.AllowedMentions.none()
-            )
-            await asyncio.sleep(0.5)
-        except Exception as e:
-            log.error(f"Error enviando mensaje: {e}")
-
-    try:
-        await webhook.delete()
-    except Exception:
-        pass
 
 
 def deserialize_overwrites(overwrites_data: list, guild: discord.Guild, role_map: dict) -> dict:
@@ -453,13 +408,11 @@ async def cmd_backupinfo(ctx):
         await ctx.send("❌ No hay backup disponible.")
         return
     ts = g["timestamp"][:19].replace("T", " ")
-    total_msgs = sum(len(c.get("messages", [])) for c in g["channels"])
     embed = discord.Embed(title="📦 Info del Backup", color=0x5865F2)
     embed.add_field(name="📅 Fecha (UTC)", value=f"`{ts}`", inline=False)
     embed.add_field(name="💬 Canales", value=str(len(g["channels"])), inline=True)
     embed.add_field(name="📁 Categorías", value=str(len(g["categories"])), inline=True)
     embed.add_field(name="🎭 Roles", value=str(len(g["roles"])), inline=True)
-    embed.add_field(name="✉️ Mensajes", value=str(total_msgs), inline=True)
     embed.add_field(name="⏰ Auto-backup", value=f"Cada {BACKUP_INTERVAL_MINUTES} min", inline=True)
     await ctx.send(embed=embed)
 
